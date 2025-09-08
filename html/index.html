@@ -18,7 +18,6 @@
         GoogleAuthProvider,
         signInWithPopup,
         signInWithCustomToken,
-        signInAnonymously,
         onAuthStateChanged,
       } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
       import {
@@ -95,9 +94,8 @@
             await signInWithCustomToken(auth, initialAuthToken);
             console.log('Signed in with custom token.');
           } else {
-            // Fallback to anonymous sign-in if no token is provided
-            await signInAnonymously(auth);
-            console.log('Signed in anonymously.');
+            // 為了避免 auth/admin-restricted-operation 錯誤，我們不再嘗試匿名登入
+            showAuthUI();
           }
         } catch (error) {
           console.error('Error initializing Firebase:', error);

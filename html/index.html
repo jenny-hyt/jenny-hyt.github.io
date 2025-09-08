@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>情緒追蹤 App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+      import {
+        getAuth,
+        signInAnonymously,
+        signInWithCustomToken,
+        onAuthStateChanged,
+      } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+      import {
+        getFirestore,
+        doc,
+        getDoc,
+        setDoc,
+        onSnapshot,
+        collection,
+        query,
+        where,
+        getDocs,
+      } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+      // Global variables provided by the environment
+      const appId =
+        typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+      const firebaseConfig =
+        typeof __firebase_config !== 'undefined'
+          ? JSON.parse(__firebase_config)
+          : {};
+      const initialAuthToken =
+        typeof __initial_auth_token !== 'undefined'
+          ? __initial_auth_token
+          : null;
+
+      let app, db, auth, userId;
+
+      async function initializeFirebase() {
+        try {
+          if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            onAuthStateChanged(auth, async (user) => {
+              if (user) {
+                userId = user.uid;
+                document.getElementById(
+                  'user-info'
+                ).textContent = `使用者ID: ${userId}`;
+                console.log('Firebase Auth State Changed. User ID:', userId);
+                await fetchSettings();
+                showMainContent();
+                renderCalendar(currentDate);
+              } else {
+                userId = null;
+                await fetchSettings();
+                showMainContent();
+                renderCalendar(currentDate);
+              }
+            });
+
+            if (initialAuthToken) {
+              await signInWithCustomToken(auth, initialAuthToken);
+              console.log('Signed in with custom token.');
+            } else {
+              await signInAnonymously(auth);
+              console.log('Signed in anonymously.');
+            }
+          } else {
+            console.error('Firebase config is not provided.');
+            await fetchSettings();
+            showMainContent();
+            renderCalendar(currentDate);
+          }
+        } catch (error) {
+          console.error('Error initializing Firebase:', error);
+          await fetchSettings();
+          showMainContent();
+          renderCalendar(currentDate);
+        }
+      }
+
+      function showMainContent() {
+        document.getElementById('loading-spinner').classList.add('hidden');
+        document.getElementById('main-app').classList.remove('hidden');
+      }
+
+      let currentDate = new Date();
+      const moodLabels = {
+        1: '起伏很小',
+        2: '起伏較小',
+        3: '中等起伏',
+        4: '起伏較大',
+        5: '起伏很大',
+      };
+
+      // Default settings
+      let settings = { startHour: 0, endHour: 23 };
+
+      const elements = {
+        calendarView: document.getElementById('calendar-view'),
+        dailyView: document.getElementById('daily-view'),
+        weeklyView: document.getElementById('weekly-view'),
+        settingsView: document.getElementById('settings-view'),
+        monthYearDisplay: document.getElementById('month-year-display'),
+        calendarGrid: document.getElementById('calendar-grid'),
+        dailyTitle: document.getElementById('daily-title'),
+        hourlyEntries: document.getElementById('hourly-entries'),
+        addEntryForm: document.getElementById('add-entry-form'),
+        entryDateInput: document.getElementById('entry-date-input'),
+        entryTimeSelect: document.getElementById('entry-time-select'),
+        moodInput: document.getElementById('mood-input'),
+        fluctuationInput: document.getElementById('fluctuation-input'),
+        eventInput: document.getElementById('event-input'),
+        weeklyCanvas: document.getElementById('weekly-canvas'),
+        startHourInput: document.getElementById('start-hour-input'),
+        endHourInput: document.getElementById('end-hour-input'),
+      };
+
+      async function fetchSettings() {
+        if (!db || !userId) {
+          console.warn('Firebase not ready, using default settings.');
+          return;
+        }
+        const settingsDocPath = `/artifacts/${appId}/users/${userId}/settings/mood_tracker_config`;
+        const docRef = doc(db, settingsDocPath);
+        try {
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            settings = docSnap.data();
+            console.log('Settings loaded:', settings);
+          }
+        } catch (error) {
+          console.error('Error fetching settings:', error);
+        }
+      }
+
+      async function saveSettings(event) {
+        event.preventDefault();
+        if (!db || !userId) {
+          console.error(
+            'Firebase is not initialized or user is not authenticated.'
+          );
+          return;
+        }
+        const settingsDocPath = `/artifacts/${appId}/users/${userId}/settings/mood_tracker_config`;
+        const docRef = doc(db, settingsDocPath);
+
+        settings.startHour = parseInt(elements.startHourInput.value, 10);
+        settings.endHour = parseInt(elements.endHourInput.value, 10);
+
+        try {
+          await setDoc(docRef, settings);
+          console.log('Settings saved successfully!');
+          showCalendarView();
+        } catch (error) {
+          console.error('Error saving settings:', error);
+        }
+      }
+
+      function renderCalendar(date) {
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        elements.monthYearDisplay.textContent = `${year}年 ${month + 1}月`;
+        elements.calendarGrid.innerHTML = '';
+
+        const firstDay = new Date(year, month, 1).getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+        // Add blank spaces for the first week
+        for (let i = 0; i < firstDay; i++) {
+          elements.calendarGrid.innerHTML += `<div class="p-2"></div>`;
+        }
+
+        // Add days
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dayDiv = document.createElement('div');
+          dayDiv.className = `p-2 rounded-lg text-center cursor-pointer transition-colors hover:bg-blue-200`;
+          dayDiv.textContent = day;
+          dayDiv.dataset.day = day;
+          dayDiv.addEventListener('click', () => {
+            const selectedDate = new Date(year, month, day);
+            showDailyView(selectedDate);
+          });
+          elements.calendarGrid.appendChild(dayDiv);
+        }
+      }
+
+      function showCalendarView() {
+        elements.dailyView.classList.add('hidden');
+        elements.weeklyView.classList.add('hidden');
+        elements.settingsView.classList.add('hidden');
+        elements.addEntryForm.classList.add('hidden');
+        elements.calendarView.classList.remove('hidden');
+      }
+
+      async function showDailyView(date) {
+        elements.calendarView.classList.add('hidden');
+        elements.weeklyView.classList.add('hidden');
+        elements.settingsView.classList.add('hidden');
+        elements.dailyView.classList.remove('hidden');
+        elements.addEntryForm.classList.add('hidden');
+
+        const formattedDate = `${date.getFullYear()}年${
+          date.getMonth() + 1
+        }月${date.getDate()}日`;
+        elements.dailyTitle.textContent = formattedDate;
+        elements.dailyTitle.dataset.date = date.toISOString();
+
+        elements.hourlyEntries.innerHTML = '';
+
+        const dailyData = await fetchDailyData(date);
+
+        for (let i = settings.startHour; i <= settings.endHour; i++) {
+          const hourEntry = dailyData[i] || {};
+          const entryDiv = document.createElement('div');
+          entryDiv.className = `p-4 m-2 bg-gray-100 rounded-lg shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between`;
+          entryDiv.innerHTML = `
+                    <div class="flex-grow">
+                        <span class="font-bold text-gray-700">${i}時:</span>
+                        <div class="flex flex-col sm:flex-row sm:items-center mt-2 sm:mt-0">
+                            <span class="text-gray-600 mr-2">情緒: ${
+                              hourEntry.mood || '未記錄'
+                            }</span>
+                            <span class="text-gray-600 mr-2">起伏: ${
+                              hourEntry.fluctuation
+                                ? `${hourEntry.fluctuation} (${
+                                    moodLabels[hourEntry.fluctuation]
+                                  })`
+                                : '未記錄'
+                            }</span>
+                            <span class="text-gray-600">事件: ${
+                              hourEntry.event || '未記錄'
+                            }</span>
+                        </div>
+                    </div>
+                    <button class="mt-2 sm:mt-0 px-4 py-2 bg-blue-500 text-white rounded-lg shadow-md hover:bg-blue-600 transition-colors" data-hour="${i}">
+                        ${hourEntry.mood ? '編輯' : '新增'}
+                    </button>
+                `;
+          entryDiv
+            .querySelector('button')
+            .addEventListener('click', () => showEntryForm(date, i, hourEntry));
+          elements.hourlyEntries.appendChild(entryDiv);
+        }
+      }
+
+      function showEntryForm(date, hour, data = {}) {
+        elements.addEntryForm.classList.remove('hidden');
+        const today = new Date();
+        elements.entryDateInput.value = date
+          ? date.toISOString().split('T')[0]
+          : today.toISOString().split('T')[0];
+
+        // Populate the time select options based on settings
+        elements.entryTimeSelect.innerHTML = '';
+        for (let i = settings.startHour; i <= settings.endHour; i++) {
+          const option = document.createElement('option');
+          option.value = i.toString().padStart(2, '0');
+          option.textContent = `${i}時`;
+          elements.entryTimeSelect.appendChild(option);
+        }
+
+        elements.entryTimeSelect.value =
+          hour !== null
+            ? hour.toString().padStart(2, '0')
+            : today.getHours().toString().padStart(2, '0');
+        elements.moodInput.value = data.mood || '';
+        elements.fluctuationInput.value = data.fluctuation || '';
+        elements.eventInput.value = data.event || '';
+      }
+
+      async function saveEntry(event) {
+        event.preventDefault();
+        if (!db || !userId) {
+          console.error(
+            'Firebase is not initialized or user is not authenticated.'
+          );
+          return;
+        }
+
+        const dateStr = elements.entryDateInput.value;
+        const hour = parseInt(elements.entryTimeSelect.value, 10);
+        const mood = elements.moodInput.value;
+        const fluctuation = parseInt(elements.fluctuationInput.value, 10);
+        const eventText = elements.eventInput.value;
+
+        const date = new Date(dateStr);
+        const docPath = `/artifacts/${appId}/users/${userId}/mood_tracker/${dateStr}`;
+        const docRef = doc(db, docPath);
+
+        try {
+          const docSnap = await getDoc(docRef);
+          let dailyData = docSnap.exists()
+            ? docSnap.data().entries
+            : Array(24).fill({});
+
+          dailyData[hour] = {
+            mood: mood,
+            fluctuation: fluctuation,
+            event: eventText,
+          };
+
+          await setDoc(docRef, { entries: dailyData });
+          console.log('Document successfully written!');
+
+          elements.addEntryForm.classList.add('hidden');
+          showDailyView(date);
+        } catch (error) {
+          console.error('Error writing document: ', error);
+        }
+      }
+
+      async function fetchDailyData(date) {
+        if (!db || !userId) {
+          console.error(
+            'Firebase is not initialized or user is not authenticated.'
+          );
+          return Array(24).fill({});
+        }
+        const dateStr = date.toISOString().split('T')[0];
+        const docPath = `/artifacts/${appId}/users/${userId}/mood_tracker/${dateStr}`;
+        const docRef = doc(db, docPath);
+
+        try {
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            return docSnap.data().entries || Array(24).fill({});
+          }
+        } catch (error) {
+          console.error('Error fetching daily data:', error);
+        }
+        return Array(24).fill({});
+      }
+
+      function showWeeklyView() {
+        elements.calendarView.classList.add('hidden');
+        elements.dailyView.classList.add('hidden');
+        elements.settingsView.classList.add('hidden');
+        elements.weeklyView.classList.remove('hidden');
+        renderWeeklyChart();
+      }
+
+      function showSettingsView() {
+        elements.calendarView.classList.add('hidden');
+        elements.dailyView.classList.add('hidden');
+        elements.weeklyView.classList.add('hidden');
+        elements.settingsView.classList.remove('hidden');
+
+        // Populate settings fields with current values
+        elements.startHourInput.value = settings.startHour;
+        elements.endHourInput.value = settings.endHour;
+      }
+
+      async function renderWeeklyChart() {
+        const canvas = elements.weeklyCanvas;
+        const ctx = canvas.getContext('2d');
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const startOfWeek = new Date(currentDate);
+        startOfWeek.setDate(currentDate.getDate() - currentDate.getDay());
+
+        const weeklyData = await fetchWeeklyData(startOfWeek);
+        const fluctuationData = weeklyData.map(
+          (d) => d.averageFluctuation || 0
+        );
+
+        // Chart styling
+        const padding = 40;
+        const chartWidth = canvas.width - padding * 2;
+        const chartHeight = canvas.height - padding * 2;
+        const maxValue = 5;
+        const barWidth = chartWidth / fluctuationData.length / 2;
+        const barSpacing = chartWidth / fluctuationData.length / 2;
+
+        ctx.font = '14px Noto Sans TC';
+        ctx.fillStyle = '#4B5563';
+
+        // Draw axis
+        ctx.beginPath();
+        ctx.moveTo(padding, padding + chartHeight);
+        ctx.lineTo(padding + chartWidth, padding + chartHeight);
+        ctx.lineTo(padding + chartWidth, padding);
+        ctx.strokeStyle = '#D1D5DB';
+        ctx.stroke();
+
+        // Y-axis labels
+        for (let i = 0; i <= 5; i++) {
+          ctx.fillStyle = '#4B5563';
+          const y = padding + chartHeight - (i / maxValue) * chartHeight;
+          ctx.fillText(i, padding - 20, y);
+        }
+
+        // Draw bars and X-axis labels
+        for (let i = 0; i < fluctuationData.length; i++) {
+          const barHeight = (fluctuationData[i] / maxValue) * chartHeight;
+          const x = padding + barSpacing + i * (barWidth + barSpacing);
+          const y = padding + chartHeight - barHeight;
+
+          ctx.fillStyle = '#3B82F6';
+          ctx.fillRect(x, y, barWidth, barHeight);
+
+          const dayName = ['日', '一', '二', '三', '四', '五', '六'][i];
+          ctx.fillStyle = '#4B5563';
+          ctx.fillText(
+            dayName,
+            x + barWidth / 2 - 8,
+            padding + chartHeight + 20
+          );
+
+          // Value on top of bar
+          if (fluctuationData[i] > 0) {
+            ctx.fillText(
+              fluctuationData[i].toFixed(1),
+              x + barWidth / 2 - 10,
+              y - 5
+            );
+          }
+        }
+      }
+
+      async function fetchWeeklyData(startDate) {
+        if (!db || !userId) {
+          console.error(
+            'Firebase is not initialized or user is not authenticated.'
+          );
+          return [];
+        }
+
+        const dates = [];
+        for (let i = 0; i < 7; i++) {
+          const date = new Date(startDate);
+          date.setDate(startDate.getDate() + i);
+          dates.push(date.toISOString().split('T')[0]);
+        }
+
+        const weeklyData = [];
+        for (const dateStr of dates) {
+          const docPath = `/artifacts/${appId}/users/${userId}/mood_tracker/${dateStr}`;
+          const docRef = doc(db, docPath);
+
+          try {
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              const entries = docSnap.data().entries || [];
+              const validFluctuations = entries
+                .filter((e) => e.fluctuation)
+                .map((e) => e.fluctuation);
+              const averageFluctuation =
+                validFluctuations.length > 0
+                  ? validFluctuations.reduce((a, b) => a + b, 0) /
+                    validFluctuations.length
+                  : 0;
+              weeklyData.push({ date: dateStr, entries, averageFluctuation });
+            } else {
+              weeklyData.push({
+                date: dateStr,
+                entries: [],
+                averageFluctuation: 0,
+              });
+            }
+          } catch (error) {
+            console.error('Error fetching weekly data:', error);
+            weeklyData.push({
+              date: dateStr,
+              entries: [],
+              averageFluctuation: 0,
+            });
+          }
+        }
+        return weeklyData;
+      }
+
+      document.getElementById('prev-month').addEventListener('click', () => {
+        currentDate.setMonth(currentDate.getMonth() - 1);
+        renderCalendar(currentDate);
+      });
+
+      document.getElementById('next-month').addEventListener('click', () => {
+        currentDate.setMonth(currentDate.getMonth() + 1);
+        renderCalendar(currentDate);
+      });
+
+      document
+        .getElementById('back-to-calendar-daily')
+        .addEventListener('click', () => {
+          elements.dailyView.classList.add('hidden');
+          elements.calendarView.classList.remove('hidden');
+          elements.addEntryForm.classList.add('hidden');
+        });
+
+      document
+        .getElementById('back-to-calendar-weekly')
+        .addEventListener('click', () => {
+          elements.weeklyView.classList.add('hidden');
+          elements.calendarView.classList.remove('hidden');
+          elements.addEntryForm.classList.add('hidden');
+        });
+
+      document
+        .getElementById('back-to-calendar-settings')
+        .addEventListener('click', () => {
+          elements.settingsView.classList.add('hidden');
+          elements.calendarView.classList.remove('hidden');
+        });
+
+      document
+        .getElementById('view-weekly-mood')
+        .addEventListener('click', showWeeklyView);
+
+      document
+        .getElementById('add-mood-entry-calendar')
+        .addEventListener('click', () => showEntryForm(null, null));
+
+      document
+        .getElementById('add-mood-entry-daily')
+        .addEventListener('click', () => {
+          const date = new Date(elements.dailyTitle.dataset.date);
+          const hour = new Date().getHours();
+          showEntryForm(date, hour);
+        });
+
+      document
+        .getElementById('view-settings')
+        .addEventListener('click', showSettingsView);
+
+      document
+        .getElementById('save-settings-form')
+        .addEventListener('submit', saveSettings);
+
+      elements.addEntryForm.addEventListener('submit', saveEntry);
+
+      document.getElementById('cancel-entry').addEventListener('click', (e) => {
+        e.preventDefault();
+        elements.addEntryForm.classList.add('hidden');
+      });
+
+      // Initialize on window load
+      window.onload = initializeFirebase;
+    </script>
+  </head>
+  <body
+    class="bg-gray-50 font-[Noto Sans TC] text-gray-800 p-4 min-h-screen flex items-center justify-center"
+  >
+    <div
+      id="loading-spinner"
+      class="flex flex-col items-center justify-center text-gray-500"
+    >
+      <svg
+        class="animate-spin -ml-1 mr-3 h-8 w-8 text-blue-500"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle
+          class="opacity-25"
+          cx="12"
+          cy="12"
+          r="10"
+          stroke="currentColor"
+          stroke-width="4"
+        ></circle>
+        <path
+          class="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+        ></path>
+      </svg>
+      <div class="mt-4 text-sm">載入中...</div>
+    </div>
+
+    <div
+      id="main-app"
+      class="hidden w-full max-w-4xl bg-white rounded-xl shadow-2xl p-6 sm:p-10"
+    >
+      <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl sm:text-4xl font-bold text-center text-gray-900">
+          情緒追蹤 App
+        </h1>
+        <span id="user-info" class="text-xs text-gray-500"></span>
+      </div>
+
+      <!-- Calendar View -->
+      <div id="calendar-view">
+        <div class="flex justify-between items-center mb-6">
+          <button
+            id="prev-month"
+            class="p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M15 19l-7-7 7-7"
+              />
+            </svg>
+          </button>
+          <h2 id="month-year-display" class="text-2xl font-semibold"></h2>
+          <button
+            id="next-month"
+            class="p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M9 5l7 7-7 7"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-7 text-center font-bold text-gray-500 mb-2">
+          <div>日</div>
+          <div>一</div>
+          <div>二</div>
+          <div>三</div>
+          <div>四</div>
+          <div>五</div>
+          <div>六</div>
+        </div>
+        <div id="calendar-grid" class="grid grid-cols-7 gap-1"></div>
+
+        <div
+          class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4 mt-6"
+        >
+          <button
+            id="add-mood-entry-calendar"
+            class="px-6 py-3 bg-green-500 text-white rounded-full shadow-lg hover:bg-green-600 transition-colors"
+          >
+            新增情緒
+          </button>
+          <button
+            id="view-weekly-mood"
+            class="px-6 py-3 bg-indigo-500 text-white rounded-full shadow-lg hover:bg-indigo-600 transition-colors"
+          >
+            查看本週情緒起伏
+          </button>
+          <button
+            id="view-settings"
+            class="px-6 py-3 bg-gray-500 text-white rounded-full shadow-lg hover:bg-gray-600 transition-colors"
+          >
+            設定
+          </button>
+        </div>
+      </div>
+
+      <!-- Daily View -->
+      <div id="daily-view" class="hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h2 id="daily-title" class="text-2xl font-semibold"></h2>
+          <button
+            id="back-to-calendar-daily"
+            class="p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"
+              />
+            </svg>
+          </button>
+        </div>
+        <div id="hourly-entries" class="space-y-4"></div>
+
+        <div class="flex justify-center mt-6">
+          <button
+            id="add-mood-entry-daily"
+            class="px-6 py-3 bg-green-500 text-white rounded-full shadow-lg hover:bg-green-600 transition-colors"
+          >
+            新增情緒
+          </button>
+        </div>
+
+        <form
+          id="add-entry-form"
+          class="mt-8 p-6 bg-blue-50 rounded-xl shadow-inner hidden"
+        >
+          <h3 class="text-xl font-bold mb-4 text-blue-800">新增或編輯記錄</h3>
+          <input type="hidden" id="entry-date-input" />
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label
+                for="entry-time-select"
+                class="block text-gray-700 font-medium"
+                >時間</label
+              >
+              <select
+                id="entry-time-select"
+                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              >
+                <!-- Options will be added by JS -->
+              </select>
+            </div>
+            <div>
+              <label
+                for="fluctuation-input"
+                class="block text-gray-700 font-medium"
+                >情緒起伏 (1-5)</label
+              >
+              <input
+                type="number"
+                id="fluctuation-input"
+                min="1"
+                max="5"
+                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              />
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <label for="mood-input" class="block text-gray-700 font-medium"
+              >情緒</label
+            >
+            <input
+              type="text"
+              id="mood-input"
+              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              placeholder="例如：😀。開心"
+            />
+          </div>
+
+          <div class="mt-4">
+            <label for="event-input" class="block text-gray-700 font-medium"
+              >事件</label
+            >
+            <textarea
+              id="event-input"
+              rows="3"
+              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              placeholder="例如：與朋友聚餐"
+            ></textarea>
+          </div>
+
+          <div class="flex justify-end space-x-4 mt-6">
+            <button
+              type="button"
+              id="cancel-entry"
+              class="px-6 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              class="px-6 py-2 bg-blue-500 text-white rounded-lg shadow-md hover:bg-blue-600 transition-colors"
+            >
+              儲存
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Weekly View -->
+      <div id="weekly-view" class="hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-semibold">本週情緒起伏</h2>
+          <button
+            id="back-to-calendar-weekly"
+            class="p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"
+              />
+            </svg>
+          </button>
+        </div>
+        <canvas
+          id="weekly-canvas"
+          class="w-full h-80 border rounded-lg shadow-md"
+        ></canvas>
+      </div>
+
+      <!-- Settings View -->
+      <div id="settings-view" class="hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-semibold">設定</h2>
+          <button
+            id="back-to-calendar-settings"
+            class="p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <form
+          id="save-settings-form"
+          class="mt-8 p-6 bg-gray-100 rounded-xl shadow-inner"
+        >
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label
+                for="start-hour-input"
+                class="block text-gray-700 font-medium"
+                >每日開始時間 (0-23)</label
+              >
+              <input
+                type="number"
+                id="start-hour-input"
+                min="0"
+                max="23"
+                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              />
+            </div>
+            <div>
+              <label
+                for="end-hour-input"
+                class="block text-gray-700 font-medium"
+                >每日結束時間 (0-23)</label
+              >
+              <input
+                type="number"
+                id="end-hour-input"
+                min="0"
+                max="23"
+                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              />
+            </div>
+          </div>
+
+          <div class="flex justify-end mt-6">
+            <button
+              type="submit"
+              class="px-6 py-2 bg-blue-500 text-white rounded-lg shadow-md hover:bg-blue-600 transition-colors"
+            >
+              儲存設定
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </body>
+</html>

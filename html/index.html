@@ -36,62 +36,75 @@
       // Global variables provided by the environment
       const appId =
         typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-      const firebaseConfig =
-        typeof __firebase_config !== 'undefined'
-          ? JSON.parse(__firebase_config)
-          : {};
       const initialAuthToken =
         typeof __initial_auth_token !== 'undefined'
           ? __initial_auth_token
           : null;
+
+      // 請在這裡貼上你的 Firebase 配置物件
+      // 從 Firebase Console 的專案設定 > 你的應用程式 > Config 複製整個物件
+      const firebaseConfig = {
+        apiKey: 'AIzaSyAFijZncn4-ByfsUi2SEgcyOb7yUVUoyRQ',
+        authDomain: 'emotion-record-hyt.firebaseapp.com',
+        projectId: 'emotion-record-hyt',
+        storageBucket: 'emotion-record-hyt.firebasestorage.app',
+        messagingSenderId: '18543619141',
+        appId: '1:18543619141:web:7c76964366e34cf708072c',
+        measurementId: 'G-41V4H2K6F1',
+      };
 
       let app, db, auth, userId;
 
       // --- Firebase Initialization and Authentication ---
       async function initializeFirebase() {
         try {
-          if (Object.keys(firebaseConfig).length > 0) {
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
+          if (Object.keys(firebaseConfig).length === 0) {
+            throw new Error(
+              'Firebase config is not provided. Please paste your config into the code.'
+            );
+          }
 
-            // Listen for auth state changes to update UI
-            onAuthStateChanged(auth, async (user) => {
-              if (user) {
-                userId = user.uid;
-                document.getElementById(
-                  'user-info'
-                ).textContent = `使用者ID: ${userId}`;
-                document
-                  .getElementById('sign-out-btn')
-                  .classList.remove('hidden');
-                console.log('Firebase Auth State Changed. User ID:', userId);
-                await fetchSettings();
-                showMainContent();
-                renderCalendar(currentDate);
-              } else {
-                userId = null;
-                document.getElementById('user-info').textContent = '';
-                document.getElementById('sign-out-btn').classList.add('hidden');
-                console.log('User signed out or not logged in.');
-                showAuthUI();
-              }
-            });
+          app = initializeApp(firebaseConfig);
+          db = getFirestore(app);
+          auth = getAuth(app);
 
-            if (initialAuthToken) {
-              await signInWithCustomToken(auth, initialAuthToken);
-              console.log('Signed in with custom token.');
+          // Listen for auth state changes to update UI
+          onAuthStateChanged(auth, async (user) => {
+            if (user) {
+              userId = user.uid;
+              document.getElementById(
+                'user-info'
+              ).textContent = `使用者ID: ${userId}`;
+              document
+                .getElementById('sign-out-btn')
+                .classList.remove('hidden');
+              console.log('Firebase Auth State Changed. User ID:', userId);
+              await fetchSettings();
+              showMainContent();
+              renderCalendar(currentDate);
             } else {
-              // Fallback to anonymous sign-in if no token is provided
-              await signInAnonymously(auth);
-              console.log('Signed in anonymously.');
+              userId = null;
+              document.getElementById('user-info').textContent = '';
+              document.getElementById('sign-out-btn').classList.add('hidden');
+              console.log('User signed out or not logged in.');
+              showAuthUI();
             }
+          });
+
+          if (initialAuthToken) {
+            await signInWithCustomToken(auth, initialAuthToken);
+            console.log('Signed in with custom token.');
           } else {
-            console.error('Firebase config is not provided.');
-            showAuthUI();
+            // Fallback to anonymous sign-in if no token is provided
+            await signInAnonymously(auth);
+            console.log('Signed in anonymously.');
           }
         } catch (error) {
           console.error('Error initializing Firebase:', error);
+          document.getElementById(
+            'error-message'
+          ).textContent = `初始化錯誤: ${error.message}`;
+          document.getElementById('error-message').classList.remove('hidden');
           showAuthUI();
         }
       }
@@ -104,6 +117,10 @@
           console.log('Signed in with Google.');
         } catch (error) {
           console.error('Error during Google sign-in:', error);
+          document.getElementById(
+            'error-message'
+          ).textContent = `Google 登入失敗: ${error.message}`;
+          document.getElementById('error-message').classList.remove('hidden');
         }
       }
 
@@ -606,6 +623,7 @@
         歡迎來到情緒追蹤 App
       </h1>
       <p class="mb-8 text-gray-600">請登入以開始追蹤您的情緒。</p>
+      <p id="error-message" class="hidden mb-4 text-red-500 text-sm"></p>
       <button
         id="google-sign-in"
         class="w-full py-3 px-6 bg-blue-500 text-white rounded-full shadow-lg hover:bg-blue-600 transition-colors flex items-center justify-center space-x-2"

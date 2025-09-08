@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>情緒紀錄登入</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+      import {
+        getAuth,
+        signInWithPopup,
+        GoogleAuthProvider,
+        onAuthStateChanged,
+        signInWithCustomToken,
+        signInAnonymously,
+      } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+      import {
+        getFirestore,
+        doc,
+        getDoc,
+        setDoc,
+      } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+      import { setLogLevel } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+      setLogLevel('debug'); // 啟用 Firestore 偵錯日誌
+
+      // 宣告全域變數
+      let db, auth;
+
+      // 從環境變數中取得 Firebase 設定
+      const appId =
+        typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+      const firebaseConfig = JSON.parse(
+        typeof __firebase_config !== 'undefined' ? __firebase_config : '{}'
+      );
+      const initialAuthToken =
+        typeof __initial_auth_token !== 'undefined'
+          ? __initial_auth_token
+          : null;
+
+      // 取得 UI 元素
+      const authStatusElement = document.getElementById('auth-status');
+      const loginBtn = document.getElementById('login-btn');
+      const messageContainer = document.getElementById('message-container');
+
+      // 顯示訊息到 UI 上
+      function showMessage(msg) {
+        const messageElement = document.createElement('p');
+        messageElement.textContent = msg;
+        messageContainer.appendChild(messageElement);
+        messageContainer.scrollTop = messageContainer.scrollHeight; // 自動捲動到底部
+      }
+
+      // 嘗試從 Firestore 取得使用者設定文件
+      async function fetchUserSettings(user) {
+        const userId = user.uid;
+        showMessage(`使用者已登入，ID: ${userId}`);
+
+        const userSettingsPath = `artifacts/${appId}/users/${userId}/user_settings/data`;
+        const settingsDocRef = doc(db, userSettingsPath, 'my_settings');
+
+        try {
+          const docSnap = await getDoc(settingsDocRef);
+          if (docSnap.exists()) {
+            showMessage('成功從 Firestore 取得使用者設定！');
+            showMessage(`文件內容: ${JSON.stringify(docSnap.data(), null, 2)}`);
+          } else {
+            showMessage(
+              'Firestore 中找不到使用者設定文件。正在建立一個新的文件...'
+            );
+            const defaultSettings = {
+              welcomeMessage: '歡迎來到你的第一個 Firebase 應用程式！',
+              lastLogin: new Date().toISOString(),
+            };
+            await setDoc(settingsDocRef, defaultSettings);
+            showMessage(
+              '成功建立新的使用者設定文件。請重新整理頁面以查看變更。'
+            );
+          }
+        } catch (error) {
+          showMessage(`Firestore 存取失敗，錯誤: ${error.message}`);
+          console.error(error);
+        }
+      }
+
+      // 處理登入流程
+      async function handleLogin() {
+        try {
+          const provider = new GoogleAuthProvider();
+          const result = await signInWithPopup(auth, provider);
+          showMessage(
+            `成功使用 Google 登入！使用者: ${result.user.displayName}`
+          );
+        } catch (error) {
+          console.error('登入失敗:', error);
+          showMessage(`登入失敗，錯誤: ${error.message}`);
+        }
+      }
+
+      // 初始化 Firebase
+      window.onload = async function () {
+        try {
+          const app = initializeApp(firebaseConfig);
+          db = getFirestore(app);
+          auth = getAuth(app);
+          showMessage('Firebase 初始化成功。');
+
+          // 使用提供的自訂 token 登入，如果沒有則匿名登入
+          if (initialAuthToken) {
+            await signInWithCustomToken(auth, initialAuthToken);
+          } else {
+            await signInAnonymously(auth);
+          }
+
+          // 監聽登入狀態的變化
+          onAuthStateChanged(auth, async (user) => {
+            if (user) {
+              // 使用者已登入，可以安全地存取 Firestore
+              authStatusElement.textContent = '已登入';
+              authStatusElement.classList.remove('text-red-500');
+              authStatusElement.classList.add('text-green-500');
+              fetchUserSettings(user);
+              loginBtn.style.display = 'none';
+            } else {
+              // 使用者未登入
+              authStatusElement.textContent = '未登入';
+              authStatusElement.classList.remove('text-green-500');
+              authStatusElement.classList.add('text-red-500');
+              loginBtn.style.display = 'block';
+              showMessage('請點擊登入按鈕以繼續。');
+            }
+          });
+
+          loginBtn.addEventListener('click', handleLogin);
+        } catch (error) {
+          showMessage(`應用程式初始化失敗，錯誤: ${error.message}`);
+          console.error(error);
+        }
+      };
+    </script>
+  </head>
+  <body
+    class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-4"
+  >
+    <div class="bg-white p-8 rounded-lg shadow-md max-w-2xl w-full text-center">
+      <h1 class="text-3xl font-bold mb-4 text-gray-800">
+        Firestore 測試應用程式
+      </h1>
+      <div class="mb-4">
+        <p class="text-lg text-gray-600">
+          目前登入狀態:
+          <span id="auth-status" class="font-semibold text-red-500"
+            >正在檢查...</span
+          >
+        </p>
+      </div>
+      <button
+        id="login-btn"
+        class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-full transition-colors duration-200"
+      >
+        使用 Google 登入
+      </button>
+
+      <div
+        id="message-container"
+        class="mt-8 border-t pt-4 text-left text-sm text-gray-700 max-h-60 overflow-y-auto"
+      >
+        <p class="font-bold">日誌:</p>
+      </div>
+    </div>
+  </body>
+</html>

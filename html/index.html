@@ -15,8 +15,10 @@
       import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
       import {
         getAuth,
-        signInAnonymously,
+        GoogleAuthProvider,
+        signInWithPopup,
         signInWithCustomToken,
+        signInAnonymously,
         onAuthStateChanged,
       } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
       import {
@@ -45,6 +47,7 @@
 
       let app, db, auth, userId;
 
+      // --- Firebase Initialization and Authentication ---
       async function initializeFirebase() {
         try {
           if (Object.keys(firebaseConfig).length > 0) {
@@ -52,21 +55,26 @@
             db = getFirestore(app);
             auth = getAuth(app);
 
+            // Listen for auth state changes to update UI
             onAuthStateChanged(auth, async (user) => {
               if (user) {
                 userId = user.uid;
                 document.getElementById(
                   'user-info'
                 ).textContent = `使用者ID: ${userId}`;
+                document
+                  .getElementById('sign-out-btn')
+                  .classList.remove('hidden');
                 console.log('Firebase Auth State Changed. User ID:', userId);
                 await fetchSettings();
                 showMainContent();
                 renderCalendar(currentDate);
               } else {
                 userId = null;
-                await fetchSettings();
-                showMainContent();
-                renderCalendar(currentDate);
+                document.getElementById('user-info').textContent = '';
+                document.getElementById('sign-out-btn').classList.add('hidden');
+                console.log('User signed out or not logged in.');
+                showAuthUI();
               }
             });
 
@@ -74,25 +82,50 @@
               await signInWithCustomToken(auth, initialAuthToken);
               console.log('Signed in with custom token.');
             } else {
+              // Fallback to anonymous sign-in if no token is provided
               await signInAnonymously(auth);
               console.log('Signed in anonymously.');
             }
           } else {
             console.error('Firebase config is not provided.');
-            await fetchSettings();
-            showMainContent();
-            renderCalendar(currentDate);
+            showAuthUI();
           }
         } catch (error) {
           console.error('Error initializing Firebase:', error);
-          await fetchSettings();
-          showMainContent();
-          renderCalendar(currentDate);
+          showAuthUI();
         }
+      }
+
+      // Google Sign-in function
+      async function signInWithGoogle() {
+        const provider = new GoogleAuthProvider();
+        try {
+          await signInWithPopup(auth, provider);
+          console.log('Signed in with Google.');
+        } catch (error) {
+          console.error('Error during Google sign-in:', error);
+        }
+      }
+
+      // Sign-out function
+      async function signOut() {
+        try {
+          await auth.signOut();
+          console.log('Signed out successfully.');
+        } catch (error) {
+          console.error('Error signing out:', error);
+        }
+      }
+
+      function showAuthUI() {
+        document.getElementById('loading-spinner').classList.add('hidden');
+        document.getElementById('main-app').classList.add('hidden');
+        document.getElementById('auth-ui').classList.remove('hidden');
       }
 
       function showMainContent() {
         document.getElementById('loading-spinner').classList.add('hidden');
+        document.getElementById('auth-ui').classList.add('hidden');
         document.getElementById('main-app').classList.remove('hidden');
       }
 
@@ -549,6 +582,14 @@
         elements.addEntryForm.classList.add('hidden');
       });
 
+      // Add event listeners for new buttons
+      document
+        .getElementById('google-sign-in')
+        .addEventListener('click', signInWithGoogle);
+      document
+        .getElementById('sign-out-btn')
+        .addEventListener('click', signOut);
+
       // Initialize on window load
       window.onload = initializeFirebase;
     </script>
@@ -556,6 +597,46 @@
   <body
     class="bg-gray-50 font-[Noto Sans TC] text-gray-800 p-4 min-h-screen flex items-center justify-center"
   >
+    <!-- Authentication UI -->
+    <div
+      id="auth-ui"
+      class="hidden w-full max-w-lg bg-white rounded-xl shadow-2xl p-8 text-center"
+    >
+      <h1 class="text-3xl font-bold mb-6 text-gray-900">
+        歡迎來到情緒追蹤 App
+      </h1>
+      <p class="mb-8 text-gray-600">請登入以開始追蹤您的情緒。</p>
+      <button
+        id="google-sign-in"
+        class="w-full py-3 px-6 bg-blue-500 text-white rounded-full shadow-lg hover:bg-blue-600 transition-colors flex items-center justify-center space-x-2"
+      >
+        <svg
+          class="w-5 h-5"
+          viewBox="0 0 48 48"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            fill="#4285F4"
+            d="M24 9.5c3.08 0 5.67.97 7.54 2.84l4.51-4.51C33.74 3.99 29.23 2 24 2 15.65 2 8.5 6.77 4.71 13.56L11.5 18.73C13.56 12.87 18.23 9.5 24 9.5z"
+          />
+          <path
+            fill="#34A853"
+            d="M4.71 13.56C2.97 16.51 2 20.01 2 24s.97 7.49 2.71 10.44l6.79-5.17C9.37 27.26 9.07 25.68 9.07 24s.3-3.26.97-4.8L4.71 13.56z"
+          />
+          <path
+            fill="#FBBC05"
+            d="M24 38.5c-4.85 0-9.14-1.95-12.23-5.12L5.86 38.35c4.71 4.3 11.23 6.65 18.14 6.65 6.44 0 12.35-2.26 16.92-6.17l-5.75-4.44c-2.31 2.22-5.46 3.56-8.91 3.56z"
+          />
+          <path
+            fill="#EA4335"
+            d="M46.75 23.36c0-1.74-.15-3.41-.43-5.02H24v9.5h13.43c-.77 4.14-3.24 7.64-6.88 9.94l5.75 4.44c3.96-3.64 6.27-9.06 6.27-15.36z"
+          />
+        </svg>
+        <span>使用 Google 帳號登入</span>
+      </button>
+    </div>
+
+    <!-- Loading spinner -->
     <div
       id="loading-spinner"
       class="flex flex-col items-center justify-center text-gray-500"
@@ -591,7 +672,15 @@
         <h1 class="text-3xl sm:text-4xl font-bold text-center text-gray-900">
           情緒追蹤 App
         </h1>
-        <span id="user-info" class="text-xs text-gray-500"></span>
+        <div class="flex items-center space-x-2">
+          <span id="user-info" class="text-xs text-gray-500"></span>
+          <button
+            id="sign-out-btn"
+            class="hidden px-4 py-2 bg-red-500 text-white text-sm rounded-full shadow-md hover:bg-red-600 transition-colors"
+          >
+            登出
+          </button>
+        </div>
       </div>
 
       <!-- Calendar View -->
